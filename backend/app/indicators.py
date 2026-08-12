@@ -8,7 +8,9 @@ def rsi(closes: pd.Series, period: int = 14) -> pd.Series:
     avg_gain = gains.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_loss = losses.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     rs = avg_gain / avg_loss.replace(0, 1e-10)
-    return 100 - (100 / (1 + rs))
+    result = 100 - (100 / (1 + rs))
+    no_movement = (avg_gain == 0) & (avg_loss == 0)
+    return result.where(~no_movement, 50.0)
 
 
 def ema(closes: pd.Series, period: int) -> pd.Series:

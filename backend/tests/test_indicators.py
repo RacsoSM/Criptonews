@@ -15,6 +15,12 @@ def test_rsi_all_losses_is_0():
     assert result.iloc[-1] < 5
 
 
+def test_rsi_flat_series_is_neutral():
+    closes = pd.Series([100.0] * 30)  # no movement at all
+    result = rsi(closes, period=14)
+    assert abs(result.iloc[-1] - 50) < 1e-6
+
+
 def test_ema_reacts_faster_than_longer_period():
     closes = pd.Series([10.0] * 20 + [20.0] * 10)
     ema_fast = ema(closes, period=3)
