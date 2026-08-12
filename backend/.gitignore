@@ -4,3 +4,8 @@ __pycache__/
 .pytest_cache/
 *.db
 .env
+
+# Google service-account private keys (see .env.example:
+# FIREBASE_CREDENTIALS_PATH) — never commit these.
+firebase-service-account*.json
+*-service-account*.json
