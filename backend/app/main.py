@@ -18,6 +18,22 @@ def on_startup():
     start_scheduler(app)
 
 
+@app.on_event("shutdown")
+def on_shutdown():
+    """Stop the background scheduler when the app goes down.
+
+    Without this, every process that ever started the app (tests using
+    `TestClient` as a context manager, each `uvicorn --reload` restart) leaves
+    a live `BackgroundScheduler` behind whose cron trigger would fire real
+    CoinGecko/Binance/Firebase calls against the real DB at HH:01.
+    `getattr` guards the case where shutdown runs without a successful
+    startup.
+    """
+    scheduler = getattr(app.state, "scheduler", None)
+    if scheduler is not None:
+        scheduler.shutdown(wait=False)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}

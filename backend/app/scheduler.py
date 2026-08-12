@@ -12,8 +12,22 @@ The whole cycle runs inside ONE `get_session()` transaction, so a single
 coin's failure must never be allowed to escape the `with` block: `get_session`
 rolls back on any exception, which would discard every other coin's
 legitimately computed signals and position updates. Every per-coin step is
-therefore individually guarded — one bad coin is logged and skipped, the other
-29 still get their work committed.
+therefore individually guarded.
+
+The boundary of that guarantee is worth stating precisely, because it is
+narrower than "any one coin can fail safely":
+
+* Exceptions raised by `process_coin`'s own logic (bad candle data, a
+  `Multiple rows were found`, an arithmetic error…) leave the session's
+  transaction intact. Those coins are logged and skipped, and every other
+  coin's work is still committed at the end of the cycle.
+* A failure at the transaction level — a `session.flush()` blowing up with
+  `OperationalError: database is locked` or an `IntegrityError` — deactivates
+  the session's transaction. Nothing further can be flushed, so continuing
+  would only produce a `PendingRollbackError` per remaining coin, burying the
+  real root cause under ~29 misleading tracebacks, and `get_session`'s final
+  `commit()` would fail regardless. In that case the cycle logs one ERROR,
+  rolls back and aborts the remaining coins.
 
 This module contains no indicator math, no HTTP client logic and no
 position-state logic; it only sequences the modules that own those.
@@ -106,6 +120,23 @@ def run_cycle() -> None:
                 # Isolate this coin's failure: the rest of the cycle's signals
                 # and position updates must still be committed.
                 logger.exception("Skipping %s: processing failed this cycle", symbol)
+                if not session.is_active:
+                    # A flush/transaction-level failure deactivated the
+                    # transaction. Every remaining coin would now raise
+                    # PendingRollbackError instead of its own real error, and
+                    # the final commit is doomed anyway — stop here so the one
+                    # real traceback above stays readable.
+                    logger.error(
+                        "Session unusable after a flush failure, "
+                        "aborting the rest of this cycle (stopped at %s)",
+                        symbol,
+                    )
+                    # Roll back explicitly so `get_session`'s closing commit()
+                    # does not raise a second, misleading PendingRollbackError
+                    # on top of the real error already logged above. The
+                    # cycle's work is lost either way.
+                    session.rollback()
+                    return
                 continue
 
             if signal is None:

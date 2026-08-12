@@ -1,8 +1,10 @@
 # backend/tests/test_scheduler_job.py
+import logging
 from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pandas as pd
+from sqlalchemy.exc import OperationalError
 
 from app.models import Coin, DeviceToken
 from app.scheduler import run_cycle
@@ -184,6 +186,57 @@ def test_run_cycle_continues_when_process_coin_raises_for_one_coin(mocker, db_se
     notify_mock.assert_called_once_with("device-1", eth_signal)
     # And the cycle's coin-table refresh survived (session was not rolled back).
     assert db_session.query(Coin).filter_by(symbol="ETHUSDT").count() == 1
+
+
+def test_run_cycle_aborts_remaining_coins_when_session_becomes_unusable(
+    mocker, db_session, caplog
+):
+    """A flush-level failure poisons the transaction — stop instead of spamming.
+
+    Per-coin isolation only holds while the session's transaction is still
+    usable. Once a `session.flush()` inside `process_coin` fails, every
+    remaining coin would raise `PendingRollbackError` rather than its own real
+    error, so the cycle must log once and abort.
+    """
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[
+            {"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1},
+            {"symbol": "ETHUSDT", "name": "Ethereum", "rank": 2},
+            {"symbol": "SOLUSDT", "name": "Solana", "rank": 3},
+        ],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    process_coin_mock = mocker.patch(
+        "app.scheduler.process_coin",
+        side_effect=OperationalError(
+            "INSERT INTO positions ...", {}, Exception("database is locked")
+        ),
+    )
+    # What a failed flush leaves behind: a deactivated transaction.
+    mocker.patch.object(type(db_session), "is_active", False)
+    rollback_spy = mocker.spy(db_session, "rollback")
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification")
+
+    with caplog.at_level(logging.ERROR, logger="app.scheduler"):
+        run_cycle()  # must not raise
+
+    # Stopped at the first coin: no grinding through the other two.
+    process_coin_mock.assert_called_once()
+    assert process_coin_mock.call_args[0][1] == "BTCUSDT"
+    notify_mock.assert_not_called()
+
+    # Rolled back once, so get_session's closing commit() cannot raise a
+    # second, misleading PendingRollbackError.
+    rollback_spy.assert_called_once_with()
+
+    aborts = [
+        r for r in caplog.records
+        if "aborting the rest of this cycle" in r.getMessage()
+    ]
+    assert len(aborts) == 1
+    assert aborts[0].levelno == logging.ERROR
 
 
 def test_run_cycle_continues_when_notification_raises(mocker, db_session):
