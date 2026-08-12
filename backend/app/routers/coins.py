@@ -1,5 +1,6 @@
 # backend/app/routers/coins.py
 from fastapi import APIRouter
+from sqlalchemy import or_
 
 from app.db import get_session
 from app.models import Coin, Position
@@ -11,7 +12,22 @@ router = APIRouter(prefix="/coins", tags=["coins"])
 @router.get("", response_model=list[CoinOut])
 def list_coins():
     with get_session() as session:
-        coins = session.query(Coin).filter_by(active=True).order_by(Coin.rank).all()
+        # Inactive coins (dropped out of the top-N ranking) are still listed
+        # while they hold an OPEN position: the user must be able to see — and
+        # eventually exit — a position the scheduler is still monitoring.
+        open_symbols = {
+            symbol
+            for (symbol,) in session.query(Position.coin_symbol)
+            .filter_by(status="OPEN")
+            .distinct()
+            .all()
+        }
+        coins = (
+            session.query(Coin)
+            .filter(or_(Coin.active.is_(True), Coin.symbol.in_(open_symbols)))
+            .order_by(Coin.rank)
+            .all()
+        )
         result = []
         for coin in coins:
             position = (
