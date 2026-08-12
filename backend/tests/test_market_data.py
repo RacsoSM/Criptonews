@@ -63,3 +63,40 @@ def test_get_klines_returns_none_on_http_error(mocker):
     df = get_klines("BTCUSDT")
 
     assert df is None
+
+
+def test_get_klines_returns_none_on_non_2xx_status(mocker):
+    mocker.patch(
+        "app.market_data.httpx.get",
+        return_value=httpx.Response(400, json={}),
+    )
+
+    df = get_klines("BTCUSDT")
+
+    assert df is None
+
+
+def test_get_top_symbols_raises_on_coingecko_error_status(mocker):
+    def fake_get(url, params=None, timeout=None):
+        if "coingecko" in url:
+            return httpx.Response(400, json={"error": "bad request"})
+        raise AssertionError(f"unexpected URL {url}")
+
+    mocker.patch("app.market_data.httpx.get", side_effect=fake_get)
+
+    with pytest.raises(RuntimeError):
+        get_top_symbols(limit=3)
+
+
+def test_get_top_symbols_raises_on_binance_exchange_info_error_status(mocker):
+    def fake_get(url, params=None, timeout=None):
+        if "coingecko" in url:
+            return httpx.Response(200, json=COINGECKO_SAMPLE)
+        if "exchangeInfo" in url:
+            return httpx.Response(400, json={"error": "bad request"})
+        raise AssertionError(f"unexpected URL {url}")
+
+    mocker.patch("app.market_data.httpx.get", side_effect=fake_get)
+
+    with pytest.raises(RuntimeError):
+        get_top_symbols(limit=3)
