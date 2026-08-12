@@ -4,7 +4,7 @@ import pytest
 from app.indicators import atr
 from app.models import Position, Signal
 from app.positions_service import process_coin
-from app.signal_engine import compute_votes
+from app.signal_engine import compute_votes, decide_direction
 
 
 def _uptrend_df(n=60):
@@ -169,6 +169,49 @@ def test_buy_allowed_again_after_position_closed(db_session, mocker):
     assert reopen is not None
     assert db_session.query(Position).filter_by(coin_symbol="BTCUSDT").count() == 2
     assert db_session.query(Position).filter_by(coin_symbol="BTCUSDT", status="OPEN").count() == 1
+
+
+def test_real_three_of_four_buy_creates_position_and_signal_end_to_end(db_session):
+    """The only test that exercises the whole engine with nothing mocked.
+
+    Every other case stubs `decide_direction` (or `process_coin`) to force a
+    direction, so the real path compute_votes -> decide_direction -> Position +
+    Signal is never actually walked. This frame — 30 flat bars then a jump — is
+    the one proven in test_signal_engine to fire ema_cross, macd and donchian
+    all "buy" on the last bar: a genuine 3-of-4 BUY.
+    """
+    closes = [10.0] * 30 + [20.0]
+    df = pd.DataFrame({
+        "open": closes,
+        "high": [c + 1 for c in closes],
+        "low": [c - 1 for c in closes],
+        "close": closes,
+    })
+
+    # Guard the premise: if the engine's thresholds ever change, this test must
+    # fail loudly here rather than silently stop testing the BUY path.
+    votes = compute_votes(df)
+    assert (votes.ema_cross, votes.macd, votes.donchian) == ("buy", "buy", "buy")
+    assert decide_direction(votes) == "BUY"
+
+    signal = process_coin(db_session, "BTCUSDT", df)
+
+    assert signal is not None
+    assert signal.id is not None
+    assert (signal.coin_symbol, signal.signal_type) == ("BTCUSDT", "BUY")
+    assert signal.price == pytest.approx(20.0)
+    assert (signal.ema_cross_vote, signal.macd_vote, signal.donchian_vote) == (
+        "buy", "buy", "buy",
+    )
+
+    position = db_session.query(Position).filter_by(coin_symbol="BTCUSDT").one()
+    assert position.status == "OPEN"
+    assert signal.position_id == position.id
+    assert position.entry_price == pytest.approx(20.0)
+    expected_atr = float(atr(df["high"], df["low"], df["close"]).iloc[-1])
+    assert position.stop_loss == pytest.approx(20.0 - 1.5 * expected_atr)
+    assert position.take_profit == pytest.approx(20.0 + 3 * expected_atr)
+    assert position.stop_loss < position.entry_price < position.take_profit
 
 
 def test_process_coin_does_not_commit(db_session, mocker):
