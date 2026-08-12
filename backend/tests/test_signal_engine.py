@@ -118,3 +118,13 @@ def test_compute_votes_donchian_no_breakout_is_none():
     df = _df_from_closes(closes)
     votes = compute_votes(df)
     assert votes.donchian is None
+
+
+def test_compute_votes_short_dataframe_does_not_raise():
+    # A 1-row DataFrame has no "previous" bar to compare against for the
+    # crossover-based votes (ema_cross, macd). This must not raise
+    # IndexError -- it should simply abstain with None, same as donchian
+    # already does when there isn't enough history.
+    df = _df_from_closes([10.0])
+    votes = compute_votes(df)
+    assert votes == IndicatorVotes(rsi=None, ema_cross=None, macd=None, donchian=None)
