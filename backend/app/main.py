@@ -2,10 +2,12 @@
 from fastapi import FastAPI
 
 from app.db import init_db
-from app.routers import devices
+from app.routers import devices, coins, signals
 
 app = FastAPI(title="Crypto Signal Notifier")
 app.include_router(devices.router)
+app.include_router(coins.router)
+app.include_router(signals.router)
 
 
 @app.on_event("startup")
