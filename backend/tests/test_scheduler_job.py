@@ -1,12 +1,13 @@
 # backend/tests/test_scheduler_job.py
 import logging
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pandas as pd
 from sqlalchemy.exc import OperationalError
 
-from app.models import Coin, DeviceToken
+from app.models import Coin, DeviceToken, Position
 from app.scheduler import run_cycle
 
 
@@ -16,6 +17,30 @@ def _session_ctx(session):
         yield session
 
     return _ctx()
+
+
+def _committing_session_ctx(session, log: list[str]):
+    """A session context that commits on exit, recording when it did.
+
+    Mirrors the real `get_session`, whose closing `commit()` is the moment a
+    cycle's signals actually become durable.
+    """
+
+    @contextmanager
+    def _ctx():
+        yield session
+        session.commit()
+        log.append("commit")
+
+    return _ctx()
+
+
+def _notified(notify_mock):
+    """(token, coin_symbol, signal_type, price) per notification attempt."""
+    return [
+        (call.args[0], call.args[1].coin_symbol, call.args[1].signal_type, call.args[1].price)
+        for call in notify_mock.call_args_list
+    ]
 
 
 def _fake_klines_df():
@@ -45,7 +70,7 @@ def test_run_cycle_refreshes_coins_generates_signal_and_notifies(mocker, db_sess
     run_cycle()
 
     assert db_session.query(Coin).filter_by(symbol="BTCUSDT").count() == 1
-    notify_mock.assert_called_once_with("device-1", fake_signal)
+    assert _notified(notify_mock) == [("device-1", "BTCUSDT", "BUY", 140.0)]
 
 
 def test_run_cycle_skips_coin_when_klines_unavailable(mocker, db_session):
@@ -151,11 +176,11 @@ def test_run_cycle_notifies_every_token_for_every_signal(mocker, db_session):
     run_cycle()
 
     assert notify_mock.call_count == 4
-    assert notify_mock.call_args_list == [
-        mocker.call("device-1", btc_signal),
-        mocker.call("device-2", btc_signal),
-        mocker.call("device-1", eth_signal),
-        mocker.call("device-2", eth_signal),
+    assert _notified(notify_mock) == [
+        ("device-1", "BTCUSDT", "BUY", 140.0),
+        ("device-2", "BTCUSDT", "BUY", 140.0),
+        ("device-1", "ETHUSDT", "SELL", 90.0),
+        ("device-2", "ETHUSDT", "SELL", 90.0),
     ]
 
 
@@ -183,7 +208,7 @@ def test_run_cycle_continues_when_process_coin_raises_for_one_coin(mocker, db_se
     run_cycle()  # must not raise
 
     # The healthy coin still produced its signal and notification.
-    notify_mock.assert_called_once_with("device-1", eth_signal)
+    assert _notified(notify_mock) == [("device-1", "ETHUSDT", "BUY", 140.0)]
     # And the cycle's coin-table refresh survived (session was not rolled back).
     assert db_session.query(Coin).filter_by(symbol="ETHUSDT").count() == 1
 
@@ -261,6 +286,272 @@ def test_run_cycle_continues_when_notification_raises(mocker, db_session):
 
     assert notify_mock.call_count == 2  # second token still attempted
     assert db_session.query(Coin).filter_by(symbol="BTCUSDT").count() == 1
+
+
+def test_run_cycle_still_monitors_coin_with_open_position_outside_top_n(
+    mocker, db_session
+):
+    """A coin can only be exited by a SELL, which requires analysing it.
+
+    If it drops out of the ranking while a position is open, dropping it from
+    the cycle would strand that position open forever.
+    """
+    db_session.add(Coin(symbol="DOGEUSDT", name="Dogecoin", rank=31, active=True))
+    db_session.add(Position(
+        coin_symbol="DOGEUSDT",
+        entry_price=0.1,
+        entry_time=datetime.now(timezone.utc),
+        stop_loss=0.09,
+        take_profit=0.13,
+        status="OPEN",
+    ))
+    db_session.commit()
+
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    sell_signal = SimpleNamespace(coin_symbol="DOGEUSDT", signal_type="SELL", price=0.12)
+    process_coin_mock = mocker.patch(
+        "app.scheduler.process_coin", side_effect=[None, sell_signal]
+    )
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    processed = [call.args[1] for call in process_coin_mock.call_args_list]
+    assert processed == ["BTCUSDT", "DOGEUSDT"]
+    # ...and the SELL that closes the stranded position still goes out.
+    assert _notified(notify_mock) == [("device-1", "DOGEUSDT", "SELL", 0.12)]
+    # The coin itself is still correctly deactivated in the ranking table.
+    assert db_session.query(Coin).filter_by(symbol="DOGEUSDT").one().active is False
+
+
+def test_run_cycle_does_not_duplicate_a_coin_in_both_top_n_and_open_positions(
+    mocker, db_session
+):
+    db_session.add(Position(
+        coin_symbol="BTCUSDT",
+        entry_price=60000.0,
+        entry_time=datetime.now(timezone.utc),
+        stop_loss=57000.0,
+        take_profit=66000.0,
+        status="OPEN",
+    ))
+    db_session.commit()
+
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    process_coin_mock = mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    run_cycle()
+
+    assert [call.args[1] for call in process_coin_mock.call_args_list] == ["BTCUSDT"]
+
+
+def test_run_cycle_ignores_closed_positions_when_building_work_list(mocker, db_session):
+    db_session.add(Position(
+        coin_symbol="DOGEUSDT",
+        entry_price=0.1,
+        entry_time=datetime.now(timezone.utc),
+        stop_loss=0.09,
+        take_profit=0.13,
+        status="CLOSED",
+        closed_price=0.12,
+        closed_time=datetime.now(timezone.utc),
+    ))
+    db_session.commit()
+
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    process_coin_mock = mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    run_cycle()
+
+    assert [call.args[1] for call in process_coin_mock.call_args_list] == ["BTCUSDT"]
+
+
+def test_run_cycle_notifies_only_after_the_transaction_commits(mocker, db_session):
+    """A push is irreversible; the transaction is not.
+
+    Sending inside the session risks advertising a signal that a later
+    rollback erases from the DB.
+    """
+    order: list[str] = []
+    mocker.patch(
+        "app.scheduler.get_session",
+        return_value=_committing_session_ctx(db_session, order),
+    )
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch(
+        "app.scheduler.process_coin",
+        return_value=SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0),
+    )
+
+    def _record_send(token, signal):
+        order.append("notify")
+        return True
+
+    mocker.patch("app.scheduler.send_signal_notification", side_effect=_record_send)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    assert order == ["commit", "notify"]
+
+
+def test_run_cycle_sends_nothing_when_the_cycle_aborts_mid_loop(mocker, db_session):
+    """The abort path rolls the cycle's signals back — nothing may be pushed."""
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[
+            {"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1},
+            {"symbol": "ETHUSDT", "name": "Ethereum", "rank": 2},
+        ],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    btc_signal = SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0)
+    mocker.patch(
+        "app.scheduler.process_coin",
+        side_effect=[
+            btc_signal,
+            OperationalError("INSERT INTO positions ...", {}, Exception("db is locked")),
+        ],
+    )
+    mocker.patch.object(type(db_session), "is_active", False)
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification")
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()  # must not raise
+
+    # BTC's signal was generated, but the abort rolled it back, so the user
+    # must not have been told about it.
+    notify_mock.assert_not_called()
+
+
+def test_run_cycle_passes_a_detached_snapshot_not_the_orm_row(mocker, db_session):
+    """ORM rows are expired once the session commits/closes.
+
+    Passing one to the notifier after the `with` block would raise
+    DetachedInstanceError at attribute access time.
+    """
+    orm_like = SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0)
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=orm_like)
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    pushed = notify_mock.call_args.args[1]
+    assert pushed is not orm_like
+    assert (pushed.coin_symbol, pushed.signal_type, pushed.price) == ("BTCUSDT", "BUY", 140.0)
+
+
+def test_run_cycle_uses_configured_top_n_limit(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch("app.scheduler.settings.top_n_coins", 10)
+    top_symbols_mock = mocker.patch("app.scheduler.get_top_symbols", return_value=[])
+    mocker.patch("app.scheduler.get_klines", return_value=None)
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+
+    run_cycle()
+
+    top_symbols_mock.assert_called_once_with(limit=10)
+
+
+def test_run_cycle_warns_when_fcm_send_reports_failure(mocker, db_session, caplog):
+    """A silent False from FCM must not vanish: it means nothing was delivered."""
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch(
+        "app.scheduler.process_coin",
+        return_value=SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0),
+    )
+    mocker.patch("app.scheduler.send_signal_notification", return_value=False)
+
+    db_session.add(DeviceToken(token="device-token-abc123"))
+    db_session.commit()
+
+    with caplog.at_level(logging.WARNING, logger="app.scheduler"):
+        run_cycle()
+
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "FCM send returned failure" in r.getMessage()
+    ]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "abc123" in message  # which token
+    assert "BUY" in message and "BTCUSDT" in message  # which signal
+
+
+def test_run_cycle_logs_a_summary_line(mocker, db_session, caplog):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[
+            {"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1},
+            {"symbol": "ETHUSDT", "name": "Ethereum", "rank": 2},
+        ],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch(
+        "app.scheduler.process_coin",
+        side_effect=[
+            SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0),
+            None,
+        ],
+    )
+    mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    with caplog.at_level(logging.INFO, logger="app.scheduler"):
+        run_cycle()
+
+    summaries = [r for r in caplog.records if "Cycle complete" in r.getMessage()]
+    assert len(summaries) == 1
+    assert summaries[0].levelno == logging.INFO
+    assert summaries[0].getMessage() == (
+        "Cycle complete: 2 coins processed, 1 signals generated, 1 notifications sent"
+    )
 
 
 def test_start_scheduler_registers_hourly_job_and_stores_scheduler(mocker):

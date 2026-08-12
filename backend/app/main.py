@@ -1,9 +1,20 @@
 # backend/app/main.py
+import logging
+
 from fastapi import FastAPI
 
 from app.db import init_db
 from app.routers import devices, coins, signals, candles
 from app.scheduler import start_scheduler
+
+# uvicorn configures only its own loggers, leaving the root logger at WARNING —
+# so the scheduler's per-cycle INFO summary would never reach the console
+# without this. Verified: with uvicorn's LOGGING_CONFIG applied and no
+# basicConfig, `logging.getLogger("app.scheduler").isEnabledFor(INFO)` is False.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(title="Crypto Signal Notifier")
 app.include_router(devices.router)

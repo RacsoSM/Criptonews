@@ -4,9 +4,23 @@
 `run_cycle()` is the single job that ties the whole backend together:
 
 1. Refresh the tracked coin list from the top-N ranking (upsert, never delete).
-2. For each tracked coin, fetch fresh 1h candles.
+2. For each coin in this cycle's work list, fetch fresh 1h candles.
 3. Hand them to `process_coin`, which owns all position/signal logic.
-4. Push any generated signal to every registered device token.
+4. Push every generated signal to every registered device token — but only
+   once the cycle's transaction has actually committed (see below).
+
+The work list is the UNION of the current top-N ranking and every coin still
+holding an OPEN position. A coin that drops out of the ranking while holding a
+position must keep being analysed, otherwise the engine could never produce the
+SELL that closes it and the position would be stranded forever.
+
+Notifications are deliberately NOT sent inside the session block. A push is
+irreversible; the transaction is not. If a later coin trips the flush-level
+abort path (or the closing commit fails), every signal in the cycle is rolled
+back — so a notification sent mid-loop would advertise a signal that does not
+exist in the database and never shows up in `/signals`. The loop therefore only
+collects detached, plain-data snapshots (the ORM rows are unusable once the
+session closes) and the sends happen after the `with` block exits cleanly.
 
 The whole cycle runs inside ONE `get_session()` transaction, so a single
 coin's failure must never be allowed to escape the `with` block: `get_session`
@@ -34,13 +48,15 @@ position-state logic; it only sequences the modules that own those.
 """
 
 import logging
+from types import SimpleNamespace
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 
+from app.config import settings
 from app.db import get_session
 from app.market_data import get_klines, get_top_symbols
-from app.models import Coin, DeviceToken
+from app.models import Coin, DeviceToken, Position
 from app.notifications import send_signal_notification
 from app.positions_service import process_coin
 
@@ -76,15 +92,59 @@ def _refresh_coins(session, top_symbols: list[dict]) -> None:
     session.flush()
 
 
-def _notify_all(device_tokens: list[str], signal) -> None:
-    """Push `signal` to every registered token.
+def _cycle_symbols(session, top_symbols: list[dict]) -> list[str]:
+    """The coins to analyse this cycle: the ranking plus any open position.
 
-    `send_signal_notification` is documented never to raise, but a failure
-    there must never cost us the cycle's DB work, so it is guarded anyway.
+    A coin that fell out of the top-N but still holds an OPEN position stays on
+    the list. Dropping it would leave the position permanently open, because
+    only a technical SELL — which requires analysing the coin — can close it.
     """
+    symbols = [entry["symbol"] for entry in top_symbols]
+    tracked = set(symbols)
+
+    still_open = (
+        session.query(Position.coin_symbol)
+        .filter_by(status="OPEN")
+        .distinct()
+        .order_by(Position.coin_symbol)
+        .all()
+    )
+    for (symbol,) in still_open:
+        if symbol not in tracked:
+            tracked.add(symbol)
+            symbols.append(symbol)
+            logger.info(
+                "%s is outside the top-%d ranking but holds an OPEN position — "
+                "still monitoring it this cycle",
+                symbol,
+                settings.top_n_coins,
+            )
+
+    return symbols
+
+
+def _notify_all(device_tokens: list[str], signal) -> int:
+    """Push `signal` to every registered token; return how many sends succeeded.
+
+    `send_signal_notification` never raises and never logs — it swallows bad
+    credentials, network errors and invalid tokens alike and just returns
+    `False`. Without the warning below, a misconfigured Firebase setup would
+    silently deliver nothing forever. The exception guard is belt-and-braces:
+    a failure here must never cost us the cycle's (already committed) DB work.
+    """
+    sent = 0
     for token in device_tokens:
         try:
-            send_signal_notification(token, signal)
+            if send_signal_notification(token, signal):
+                sent += 1
+            else:
+                logger.warning(
+                    "FCM send returned failure for token ending %s (%s %s) — "
+                    "check Firebase credentials and token validity",
+                    token[-6:],
+                    signal.signal_type,
+                    signal.coin_symbol,
+                )
         except Exception:
             logger.exception(
                 "Notification failed for token ending %s (%s %s)",
@@ -92,57 +152,92 @@ def _notify_all(device_tokens: list[str], signal) -> None:
                 signal.signal_type,
                 signal.coin_symbol,
             )
+    return sent
 
 
 def run_cycle() -> None:
+    device_tokens: list[str] = []
+    pending_notifications: list[SimpleNamespace] = []
+    coins_processed = 0
+    signals_generated = 0
+    notifications_sent = 0
+    aborted = False
+
     with get_session() as session:
         try:
-            top_symbols = get_top_symbols()
+            top_symbols = get_top_symbols(limit=settings.top_n_coins)
         except Exception as exc:
             # No coin list means nothing to process — abort the cycle cleanly.
-            logger.error("Failed to refresh top-30 list: %s", exc)
-            return
+            logger.error("Failed to refresh top-%d list: %s", settings.top_n_coins, exc)
+            top_symbols = []
+            aborted = True
 
-        _refresh_coins(session, top_symbols)
+        if not aborted:
+            _refresh_coins(session, top_symbols)
 
-        device_tokens = [dt.token for dt in session.query(DeviceToken).all()]
+            device_tokens = [dt.token for dt in session.query(DeviceToken).all()]
 
-        for entry in top_symbols:
-            symbol = entry["symbol"]
-            df = get_klines(symbol, interval="1h", limit=100)
-            if df is None:
-                logger.warning("Skipping %s: klines unavailable this cycle", symbol)
-                continue
+            for symbol in _cycle_symbols(session, top_symbols):
+                df = get_klines(symbol, interval="1h", limit=100)
+                if df is None:
+                    logger.warning("Skipping %s: klines unavailable this cycle", symbol)
+                    continue
 
-            try:
-                signal = process_coin(session, symbol, df)
-            except Exception:
-                # Isolate this coin's failure: the rest of the cycle's signals
-                # and position updates must still be committed.
-                logger.exception("Skipping %s: processing failed this cycle", symbol)
-                if not session.is_active:
-                    # A flush/transaction-level failure deactivated the
-                    # transaction. Every remaining coin would now raise
-                    # PendingRollbackError instead of its own real error, and
-                    # the final commit is doomed anyway — stop here so the one
-                    # real traceback above stays readable.
-                    logger.error(
-                        "Session unusable after a flush failure, "
-                        "aborting the rest of this cycle (stopped at %s)",
-                        symbol,
-                    )
-                    # Roll back explicitly so `get_session`'s closing commit()
-                    # does not raise a second, misleading PendingRollbackError
-                    # on top of the real error already logged above. The
-                    # cycle's work is lost either way.
-                    session.rollback()
-                    return
-                continue
+                try:
+                    signal = process_coin(session, symbol, df)
+                except Exception:
+                    # Isolate this coin's failure: the rest of the cycle's
+                    # signals and position updates must still be committed.
+                    logger.exception("Skipping %s: processing failed this cycle", symbol)
+                    if not session.is_active:
+                        # A flush/transaction-level failure deactivated the
+                        # transaction. Every remaining coin would now raise
+                        # PendingRollbackError instead of its own real error,
+                        # and the final commit is doomed anyway — stop here so
+                        # the one real traceback above stays readable.
+                        logger.error(
+                            "Session unusable after a flush failure, "
+                            "aborting the rest of this cycle (stopped at %s)",
+                            symbol,
+                        )
+                        # Roll back explicitly so `get_session`'s closing
+                        # commit() does not raise a second, misleading
+                        # PendingRollbackError on top of the real error already
+                        # logged above. The cycle's work is lost either way —
+                        # which is exactly why nothing has been pushed yet.
+                        session.rollback()
+                        aborted = True
+                        break
+                    continue
 
-            if signal is None:
-                continue
+                coins_processed += 1
 
-            _notify_all(device_tokens, signal)
+                if signal is None:
+                    continue
+
+                signals_generated += 1
+                # A detached, plain-data snapshot: the ORM row is expired the
+                # moment this session commits and closes, and the send happens
+                # after that.
+                pending_notifications.append(SimpleNamespace(
+                    coin_symbol=signal.coin_symbol,
+                    signal_type=signal.signal_type,
+                    price=signal.price,
+                ))
+
+    # Past this point the transaction has committed, so every notification
+    # below refers to a signal that really is in the database.
+    if not aborted:
+        for snapshot in pending_notifications:
+            notifications_sent += _notify_all(device_tokens, snapshot)
+
+    logger.info(
+        "Cycle complete: %d coins processed, %d signals generated, "
+        "%d notifications sent",
+        coins_processed,
+        signals_generated,
+        notifications_sent,
+    )
 
 
 def start_scheduler(app: FastAPI) -> None:
