@@ -1,6 +1,6 @@
 import pandas as pd
 
-from app.indicators import rsi, ema, macd, donchian, atr
+from app.indicators import rsi, ema, macd, donchian, atr, volume_ratio
 
 
 def test_rsi_all_gains_is_100():
@@ -49,3 +49,21 @@ def test_atr_is_positive_for_volatile_series():
     closes = pd.Series([9.0, 11.0, 9.5, 12.0, 13.0] * 4)
     result = atr(highs, lows, closes, period=14)
     assert result.iloc[-1] > 0
+
+
+def test_volume_ratio_is_one_for_constant_volume():
+    volumes = pd.Series([100.0] * 25)
+    result = volume_ratio(volumes, period=20)
+    assert abs(result.iloc[-1] - 1.0) < 1e-9
+
+
+def test_volume_ratio_above_one_for_a_spike():
+    volumes = pd.Series([100.0] * 20 + [300.0])
+    result = volume_ratio(volumes, period=20)
+    assert result.iloc[-1] > 2.5  # 300 vs a ~100 rolling average
+
+
+def test_volume_ratio_is_nan_before_the_window_fills():
+    volumes = pd.Series([100.0] * 5)
+    result = volume_ratio(volumes, period=20)
+    assert pd.isna(result.iloc[-1])

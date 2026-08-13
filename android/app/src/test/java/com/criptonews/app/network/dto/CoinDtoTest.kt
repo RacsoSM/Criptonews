@@ -35,6 +35,19 @@ class CoinDtoTest {
         assertNull(coin.takeProfit)
         assertNull(coin.imageUrl)
         assertNull(coin.currentPrice)
+        assertNull(coin.entryScore)
+    }
+
+    @Test
+    fun `decodes entry score`() {
+        val raw = """
+            {"symbol":"BTCUSDT","name":"Bitcoin","rank":1,"has_open_position":false,
+             "entry_score":68.5}
+        """.trimIndent()
+
+        val coin = json.decodeFromString<CoinDto>(raw)
+
+        assertEquals(68.5, coin.entryScore)
     }
 
     @Test

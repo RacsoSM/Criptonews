@@ -16,6 +16,7 @@ class Coin(Base):
     rank: Mapped[int] = mapped_column(Integer)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    entry_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Position(Base):

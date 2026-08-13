@@ -50,6 +50,7 @@ def _fake_klines_df():
         "high": [c + 1 for c in closes],
         "low": [c - 1 for c in closes],
         "close": closes,
+        "volume": [10.0] * len(closes),
     })
 
 
@@ -552,6 +553,57 @@ def test_run_cycle_logs_a_summary_line(mocker, db_session, caplog):
     assert summaries[0].getMessage() == (
         "Cycle complete: 2 coins processed, 1 signals generated, 1 notifications sent"
     )
+
+
+def test_run_cycle_persists_entry_score_for_each_coin(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[
+            {"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1},
+            {"symbol": "ETHUSDT", "name": "Ethereum", "rank": 2},
+        ],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch(
+        "app.scheduler.compute_entry_score",
+        side_effect=[42.5, 7.0],
+    )
+
+    run_cycle()
+
+    btc = db_session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    eth = db_session.query(Coin).filter_by(symbol="ETHUSDT").one()
+    assert btc.entry_score == 42.5
+    assert eth.entry_score == 7.0
+
+
+def test_run_cycle_still_generates_signals_when_entry_score_computation_raises(
+    mocker, db_session, caplog
+):
+    """Entry score is informational — a bug in it must never cost the cycle
+    its real BUY/SELL signal or notification for that coin."""
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.compute_entry_score", side_effect=RuntimeError("boom"))
+    fake_signal = SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0)
+    mocker.patch("app.scheduler.process_coin", return_value=fake_signal)
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    with caplog.at_level(logging.ERROR, logger="app.scheduler"):
+        run_cycle()  # must not raise
+
+    assert _notified(notify_mock) == [("device-1", "BTCUSDT", "BUY", 140.0)]
+    btc = db_session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    assert btc.entry_score is None  # computation failed, left untouched
 
 
 def test_start_scheduler_registers_hourly_job_and_stores_scheduler(mocker):

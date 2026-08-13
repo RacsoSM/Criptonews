@@ -14,4 +14,5 @@ data class CoinDto(
     @SerialName("take_profit") val takeProfit: Double? = null,
     @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("current_price") val currentPrice: Double? = null,
+    @SerialName("entry_score") val entryScore: Double? = null,
 )

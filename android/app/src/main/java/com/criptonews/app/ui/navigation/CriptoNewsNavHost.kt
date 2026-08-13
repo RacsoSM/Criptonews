@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -22,6 +23,7 @@ import androidx.navigation.compose.rememberNavController
 import com.criptonews.app.AppContainer
 import com.criptonews.app.ui.detail.CoinDetailScreen
 import com.criptonews.app.ui.detail.CoinDetailViewModel
+import com.criptonews.app.ui.entryscore.EntryScoreScreen
 import com.criptonews.app.ui.history.HistoryScreen
 import com.criptonews.app.ui.history.HistoryViewModel
 import com.criptonews.app.ui.watchlist.WatchlistScreen
@@ -46,6 +48,14 @@ fun CriptoNewsNavHost(container: AppContainer, startCoinSymbol: String? = null) 
             composable(Destinations.WATCHLIST) {
                 val viewModel: WatchlistViewModel = viewModel { WatchlistViewModel(container.repository) }
                 WatchlistScreen(viewModel) { symbol ->
+                    navController.navigate(Destinations.detailRoute(symbol))
+                }
+            }
+            composable(Destinations.ENTRY_SCORE) {
+                val viewModel: WatchlistViewModel = viewModel(key = "entryScore") {
+                    WatchlistViewModel(container.repository)
+                }
+                EntryScoreScreen(viewModel) { symbol ->
                     navController.navigate(Destinations.detailRoute(symbol))
                 }
             }
@@ -75,6 +85,12 @@ private fun BottomBar(navController: NavHostController) {
             onClick = { navController.navigate(Destinations.WATCHLIST) { launchSingleTop = true } },
             icon = { Icon(Icons.Filled.List, contentDescription = null) },
             label = { Text("Watchlist") },
+        )
+        NavigationBarItem(
+            selected = currentRoute == Destinations.ENTRY_SCORE,
+            onClick = { navController.navigate(Destinations.ENTRY_SCORE) { launchSingleTop = true } },
+            icon = { Icon(Icons.Filled.TrendingUp, contentDescription = null) },
+            label = { Text("Oportunidades") },
         )
         NavigationBarItem(
             selected = currentRoute == Destinations.HISTORY,

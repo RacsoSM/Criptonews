@@ -53,6 +53,7 @@ def list_coins():
                     take_profit=position.take_profit,
                     image_url=coin.image_url,
                     current_price=current_prices.get(coin.symbol),
+                    entry_score=coin.entry_score,
                 ))
             else:
                 result.append(CoinOut(
@@ -62,5 +63,6 @@ def list_coins():
                     has_open_position=False,
                     image_url=coin.image_url,
                     current_price=current_prices.get(coin.symbol),
+                    entry_score=coin.entry_score,
                 ))
         return result

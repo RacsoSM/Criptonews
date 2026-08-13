@@ -95,6 +95,25 @@ def test_get_coins_includes_current_price_and_image(monkeypatch):
     assert eth["current_price"] is None  # not present in the fake price map
 
 
+def test_get_coins_includes_entry_score(monkeypatch):
+    SessionLocal = _seeded_db(monkeypatch)
+    session = SessionLocal()
+    coin = session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    coin.entry_score = 68.5
+    session.commit()
+    session.close()
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
+    client = TestClient(app)
+
+    response = client.get("/coins")
+
+    assert response.status_code == 200
+    btc = next(c for c in response.json() if c["symbol"] == "BTCUSDT")
+    eth = next(c for c in response.json() if c["symbol"] == "ETHUSDT")
+    assert btc["entry_score"] == 68.5
+    assert eth["entry_score"] is None  # never scored yet
+
+
 def test_get_coins_ignores_closed_position(monkeypatch):
     SessionLocal = _seeded_db(monkeypatch)
     session = SessionLocal()

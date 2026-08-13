@@ -55,6 +55,7 @@ from fastapi import FastAPI
 
 from app.config import settings
 from app.db import get_session
+from app.entry_score import compute_entry_score
 from app.market_data import get_klines, get_top_symbols
 from app.models import Coin, DeviceToken, Position
 from app.notifications import send_signal_notification
@@ -184,6 +185,16 @@ def run_cycle() -> None:
                 if df is None:
                     logger.warning("Skipping %s: klines unavailable this cycle", symbol)
                     continue
+
+                # Informational only — a scoring bug must never block the
+                # actual BUY/SELL engine below, so it gets its own guard
+                # instead of sharing process_coin's exception handling.
+                coin = session.query(Coin).filter_by(symbol=symbol).one_or_none()
+                if coin is not None:
+                    try:
+                        coin.entry_score = compute_entry_score(df)
+                    except Exception:
+                        logger.exception("Failed to compute entry score for %s", symbol)
 
                 try:
                     signal = process_coin(session, symbol, df)

@@ -38,3 +38,14 @@ def atr(highs: pd.Series, lows: pd.Series, closes: pd.Series, period: int = 14) 
         axis=1,
     ).max(axis=1)
     return tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+
+def volume_ratio(volumes: pd.Series, period: int = 20) -> pd.Series:
+    """Each candle's volume relative to the rolling average of the last `period`.
+
+    1.0 means "average volume", 2.0 means "double the recent average" — used
+    to gauge whether a move is confirmed by real participation or likely
+    noise. NaN for the first `period` candles, same as the other rolling
+    indicators, until there is a full window to average.
+    """
+    return volumes / volumes.rolling(window=period).mean()
