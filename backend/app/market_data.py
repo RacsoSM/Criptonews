@@ -1,9 +1,12 @@
+import json
+
 import httpx
 import pandas as pd
 
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
 BINANCE_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+BINANCE_TICKER_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
 
 
 def get_top_symbols(limit: int = 30) -> list[dict]:
@@ -25,8 +28,39 @@ def get_top_symbols(limit: int = 30) -> list[dict]:
     for coin in ranked:
         candidate = f"{coin['symbol'].upper()}USDT"
         if candidate in binance_symbols:
-            result.append({"symbol": candidate, "name": coin["name"], "rank": coin["market_cap_rank"]})
+            result.append({
+                "symbol": candidate,
+                "name": coin["name"],
+                "rank": coin["market_cap_rank"],
+                "image_url": coin.get("image"),
+            })
     return result
+
+
+def get_current_prices(symbols: list[str]) -> dict[str, float]:
+    """Latest traded price for each symbol, fetched in a single batched call.
+
+    Returns an empty dict on any failure (bad symbol, network error, rate
+    limit) rather than raising — a missing current price should never break
+    the coins listing, it should just leave that field null for this request.
+    """
+    if not symbols:
+        return {}
+
+    try:
+        resp = httpx.get(
+            BINANCE_TICKER_PRICE_URL,
+            # Binance's `symbols` param rejects whitespace (its own validation
+            # regex is `^\[("...","...")\]$`), so this must be compact JSON —
+            # json.dumps' default separators insert a space after each comma.
+            params={"symbols": json.dumps(symbols, separators=(",", ":"))},
+            timeout=10,
+        )
+        if resp.status_code >= 400:
+            return {}
+        return {entry["symbol"]: float(entry["price"]) for entry in resp.json()}
+    except httpx.HTTPError:
+        return {}
 
 
 def get_klines(symbol: str, interval: str = "1h", limit: int = 100) -> pd.DataFrame | None:

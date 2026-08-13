@@ -76,12 +76,14 @@ def _refresh_coins(session, top_symbols: list[dict]) -> None:
             coin.name = entry["name"]
             coin.rank = entry["rank"]
             coin.active = True
+            coin.image_url = entry.get("image_url")
         else:
             session.add(Coin(
                 symbol=entry["symbol"],
                 name=entry["name"],
                 rank=entry["rank"],
                 active=True,
+                image_url=entry.get("image_url"),
             ))
 
     current_symbols = {e["symbol"] for e in top_symbols}

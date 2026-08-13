@@ -27,6 +27,8 @@ class CoinOut(BaseModel):
     entry_price: float | None = None
     stop_loss: float | None = None
     take_profit: float | None = None
+    image_url: str | None = None
+    current_price: float | None = None
 
 
 class PositionOut(BaseModel):

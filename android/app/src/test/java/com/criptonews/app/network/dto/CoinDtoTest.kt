@@ -33,5 +33,24 @@ class CoinDtoTest {
         assertNull(coin.entryPrice)
         assertNull(coin.stopLoss)
         assertNull(coin.takeProfit)
+        assertNull(coin.imageUrl)
+        assertNull(coin.currentPrice)
+    }
+
+    @Test
+    fun `decodes current price and icon image URL`() {
+        val raw = """
+            {"symbol":"BTCUSDT","name":"Bitcoin","rank":1,"has_open_position":false,
+             "image_url":"https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+             "current_price":63428.0}
+        """.trimIndent()
+
+        val coin = json.decodeFromString<CoinDto>(raw)
+
+        assertEquals(63428.0, coin.currentPrice)
+        assertEquals(
+            "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+            coin.imageUrl,
+        )
     }
 }

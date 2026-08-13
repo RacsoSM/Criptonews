@@ -58,6 +58,7 @@ def _seeded_db(monkeypatch):
 
 def test_get_coins_marks_open_position(monkeypatch):
     _seeded_db(monkeypatch)
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
     client = TestClient(app)
 
     response = client.get("/coins")
@@ -69,6 +70,29 @@ def test_get_coins_marks_open_position(monkeypatch):
     assert btc["has_open_position"] is True
     assert btc["entry_price"] == 60000.0
     assert eth["has_open_position"] is False
+
+
+def test_get_coins_includes_current_price_and_image(monkeypatch):
+    SessionLocal = _seeded_db(monkeypatch)
+    session = SessionLocal()
+    coin = session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    coin.image_url = "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png"
+    session.commit()
+    session.close()
+    monkeypatch.setattr(
+        "app.routers.coins.get_current_prices",
+        lambda symbols: {"BTCUSDT": 61500.25},
+    )
+    client = TestClient(app)
+
+    response = client.get("/coins")
+
+    assert response.status_code == 200
+    btc = next(c for c in response.json() if c["symbol"] == "BTCUSDT")
+    eth = next(c for c in response.json() if c["symbol"] == "ETHUSDT")
+    assert btc["current_price"] == 61500.25
+    assert btc["image_url"] == "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png"
+    assert eth["current_price"] is None  # not present in the fake price map
 
 
 def test_get_coins_ignores_closed_position(monkeypatch):
@@ -86,6 +110,7 @@ def test_get_coins_ignores_closed_position(monkeypatch):
     ))
     session.commit()
     session.close()
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
     client = TestClient(app)
 
     response = client.get("/coins")
@@ -114,6 +139,7 @@ def test_get_coins_still_lists_inactive_coin_holding_open_position(monkeypatch):
     ))
     session.commit()
     session.close()
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
     client = TestClient(app)
 
     response = client.get("/coins")
@@ -140,6 +166,7 @@ def test_get_coins_hides_inactive_coin_without_open_position(monkeypatch):
     ))
     session.commit()
     session.close()
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
     client = TestClient(app)
 
     response = client.get("/coins")

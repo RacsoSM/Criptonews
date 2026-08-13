@@ -1,13 +1,19 @@
 import httpx
 import pytest
 
-from app.market_data import get_top_symbols, get_klines
+from app.market_data import get_top_symbols, get_klines, get_current_prices
 
 
 COINGECKO_SAMPLE = [
-    {"symbol": "btc", "name": "Bitcoin", "market_cap_rank": 1},
-    {"symbol": "eth", "name": "Ethereum", "market_cap_rank": 2},
-    {"symbol": "doesnotexistonbinance", "name": "Nowhere Coin", "market_cap_rank": 3},
+    {
+        "symbol": "btc", "name": "Bitcoin", "market_cap_rank": 1,
+        "image": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+    },
+    {
+        "symbol": "eth", "name": "Ethereum", "market_cap_rank": 2,
+        "image": "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png",
+    },
+    {"symbol": "doesnotexistonbinance", "name": "Nowhere Coin", "market_cap_rank": 3, "image": None},
 ]
 
 BINANCE_EXCHANGE_INFO_SAMPLE = {
@@ -36,8 +42,14 @@ def test_get_top_symbols_filters_to_binance_pairs(mocker):
     result = get_top_symbols(limit=3)
 
     assert result == [
-        {"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1},
-        {"symbol": "ETHUSDT", "name": "Ethereum", "rank": 2},
+        {
+            "symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1,
+            "image_url": "https://coin-images.coingecko.com/coins/images/1/large/bitcoin.png",
+        },
+        {
+            "symbol": "ETHUSDT", "name": "Ethereum", "rank": 2,
+            "image_url": "https://coin-images.coingecko.com/coins/images/279/large/ethereum.png",
+        },
     ]
 
 
@@ -100,3 +112,41 @@ def test_get_top_symbols_raises_on_binance_exchange_info_error_status(mocker):
 
     with pytest.raises(RuntimeError):
         get_top_symbols(limit=3)
+
+
+def test_get_current_prices_returns_symbol_to_price_map(mocker):
+    get_mock = mocker.patch(
+        "app.market_data.httpx.get",
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"symbol": "BTCUSDT", "price": "61234.50"},
+                {"symbol": "ETHUSDT", "price": "3456.78"},
+            ],
+        ),
+    )
+
+    result = get_current_prices(["BTCUSDT", "ETHUSDT"])
+
+    assert result == {"BTCUSDT": 61234.50, "ETHUSDT": 3456.78}
+    # Binance's `symbols` param rejects any whitespace in the JSON array —
+    # regression check for the space json.dumps inserts after each comma.
+    sent_symbols = get_mock.call_args.kwargs["params"]["symbols"]
+    assert " " not in sent_symbols
+    assert sent_symbols == '["BTCUSDT","ETHUSDT"]'
+
+
+def test_get_current_prices_returns_empty_dict_for_empty_input():
+    assert get_current_prices([]) == {}
+
+
+def test_get_current_prices_returns_empty_dict_on_http_error(mocker):
+    mocker.patch("app.market_data.httpx.get", side_effect=httpx.HTTPError("boom"))
+
+    assert get_current_prices(["BTCUSDT"]) == {}
+
+
+def test_get_current_prices_returns_empty_dict_on_non_2xx_status(mocker):
+    mocker.patch("app.market_data.httpx.get", return_value=httpx.Response(400, json={}))
+
+    assert get_current_prices(["BTCUSDT"]) == {}

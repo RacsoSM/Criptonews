@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from sqlalchemy import or_
 
 from app.db import get_session
+from app.market_data import get_current_prices
 from app.models import Coin, Position
 from app.schemas import CoinOut
 
@@ -28,6 +29,12 @@ def list_coins():
             .order_by(Coin.rank)
             .all()
         )
+        # One batched Binance call for every listed coin's current price,
+        # instead of the Android client fetching each coin's candles just to
+        # read the latest close. Never lets a price-fetch failure break the
+        # listing: get_current_prices returns {} on any error, so every coin
+        # just falls back to a null current_price for this request.
+        current_prices = get_current_prices([coin.symbol for coin in coins])
         result = []
         for coin in coins:
             position = (
@@ -44,6 +51,8 @@ def list_coins():
                     entry_price=position.entry_price,
                     stop_loss=position.stop_loss,
                     take_profit=position.take_profit,
+                    image_url=coin.image_url,
+                    current_price=current_prices.get(coin.symbol),
                 ))
             else:
                 result.append(CoinOut(
@@ -51,5 +60,7 @@ def list_coins():
                     name=coin.name,
                     rank=coin.rank,
                     has_open_position=False,
+                    image_url=coin.image_url,
+                    current_price=current_prices.get(coin.symbol),
                 ))
         return result
