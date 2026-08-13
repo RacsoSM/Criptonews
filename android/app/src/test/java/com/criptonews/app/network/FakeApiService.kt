@@ -1,0 +1,36 @@
+package com.criptonews.app.network
+
+import com.criptonews.app.network.dto.CandleDto
+import com.criptonews.app.network.dto.CoinDto
+import com.criptonews.app.network.dto.DeviceTokenRequest
+import com.criptonews.app.network.dto.SignalDto
+
+class FakeApiService(
+    private val coins: List<CoinDto> = emptyList(),
+    private val signals: List<SignalDto> = emptyList(),
+    private val candles: List<CandleDto> = emptyList(),
+    private val failWith: Throwable? = null,
+) : ApiService {
+    var registeredToken: String? = null
+        private set
+
+    override suspend fun getCoins(): List<CoinDto> {
+        failWith?.let { throw it }
+        return coins
+    }
+
+    override suspend fun getSignals(coinSymbol: String?): List<SignalDto> {
+        failWith?.let { throw it }
+        return if (coinSymbol == null) signals else signals.filter { it.coinSymbol == coinSymbol }
+    }
+
+    override suspend fun getCandles(symbol: String, limit: Int): List<CandleDto> {
+        failWith?.let { throw it }
+        return candles
+    }
+
+    override suspend fun registerDevice(request: DeviceTokenRequest) {
+        failWith?.let { throw it }
+        registeredToken = request.token
+    }
+}
