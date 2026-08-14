@@ -4,11 +4,17 @@ Invoked by the GitHub Actions hourly workflow (.github/workflows/hourly-cycle.ym
 which owns the schedule now that the backend no longer runs a resident process —
 see app/main.py for why the in-process APScheduler was removed.
 """
+import logging
+
 from app.db import init_db
 from app.scheduler import run_cycle
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     init_db()
     run_cycle()
 

@@ -39,6 +39,8 @@ for a mobile app.
 
 ## 3. Wire up the GitHub Actions cron job
 
+This only works once this branch is merged into your repo's default branch (`main`) — GitHub only runs scheduled workflows from the default branch.
+
 In the GitHub repo → Settings → Secrets and variables → Actions, add:
 
 - `DATABASE_URL` = the **same** Neon connection string from step 1 (the
@@ -52,6 +54,12 @@ workflow's hourly runs (~1-2 minutes each) use roughly 730-1,460 minutes/month, 
 fits but doesn't leave much headroom. Public repos get unlimited free minutes. Check
 your actual usage at Settings → Billing and plans → Actions, and consider making the
 repo public if you're close to the cap.
+
+GitHub also auto-disables scheduled workflows after 60 days with no repository
+activity (commits, merges, etc.) — it emails you when this happens. If your repo
+goes quiet for two months, the hourly job silently stops. Re-enable it from the
+Actions tab → the workflow → "Enable workflow", or just push any commit before
+that.
 
 Verify it: Actions tab → "Hourly ingestion cycle" → Run workflow (uses
 the `workflow_dispatch` trigger, no need to wait for the next hour).
