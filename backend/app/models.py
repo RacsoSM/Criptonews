@@ -17,6 +17,9 @@ class Coin(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
     entry_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pct_below_high_90d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pct_below_high_180d: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pct_below_high_360d: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class Position(Base):

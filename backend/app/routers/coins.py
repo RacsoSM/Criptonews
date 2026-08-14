@@ -54,6 +54,9 @@ def list_coins():
                     image_url=coin.image_url,
                     current_price=current_prices.get(coin.symbol),
                     entry_score=coin.entry_score,
+                    pct_below_high_90d=coin.pct_below_high_90d,
+                    pct_below_high_180d=coin.pct_below_high_180d,
+                    pct_below_high_360d=coin.pct_below_high_360d,
                 ))
             else:
                 result.append(CoinOut(
@@ -64,5 +67,8 @@ def list_coins():
                     image_url=coin.image_url,
                     current_price=current_prices.get(coin.symbol),
                     entry_score=coin.entry_score,
+                    pct_below_high_90d=coin.pct_below_high_90d,
+                    pct_below_high_180d=coin.pct_below_high_180d,
+                    pct_below_high_360d=coin.pct_below_high_360d,
                 ))
         return result

@@ -56,6 +56,7 @@ from fastapi import FastAPI
 from app.config import settings
 from app.db import get_session
 from app.entry_score import compute_entry_score
+from app.indicators import pct_below_high
 from app.market_data import get_klines, get_top_symbols
 from app.models import Coin, DeviceToken, Position
 from app.notifications import send_signal_notification
@@ -195,6 +196,22 @@ def run_cycle() -> None:
                         coin.entry_score = compute_entry_score(df)
                     except Exception:
                         logger.exception("Failed to compute entry score for %s", symbol)
+
+                    # A separate daily-candle fetch — the 1h klines above only
+                    # cover ~4 days, nowhere near enough for a 90/180/360-day
+                    # drawdown figure. Its own guard, same reasoning as the
+                    # entry score: purely informational, must never cost this
+                    # coin its real signal below.
+                    try:
+                        daily_df = get_klines(symbol, interval="1d", limit=360)
+                        if daily_df is not None:
+                            current_price = float(daily_df["close"].iloc[-1])
+                            highs = daily_df["high"]
+                            coin.pct_below_high_90d = pct_below_high(highs, current_price, 90)
+                            coin.pct_below_high_180d = pct_below_high(highs, current_price, 180)
+                            coin.pct_below_high_360d = pct_below_high(highs, current_price, 360)
+                    except Exception:
+                        logger.exception("Failed to compute drawdown stats for %s", symbol)
 
                 try:
                     signal = process_coin(session, symbol, df)

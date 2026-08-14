@@ -15,4 +15,7 @@ data class CoinDto(
     @SerialName("image_url") val imageUrl: String? = null,
     @SerialName("current_price") val currentPrice: Double? = null,
     @SerialName("entry_score") val entryScore: Double? = null,
+    @SerialName("pct_below_high_90d") val pctBelowHigh90d: Double? = null,
+    @SerialName("pct_below_high_180d") val pctBelowHigh180d: Double? = null,
+    @SerialName("pct_below_high_360d") val pctBelowHigh360d: Double? = null,
 )

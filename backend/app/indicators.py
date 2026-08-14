@@ -49,3 +49,20 @@ def volume_ratio(volumes: pd.Series, period: int = 20) -> pd.Series:
     indicators, until there is a full window to average.
     """
     return volumes / volumes.rolling(window=period).mean()
+
+
+def pct_below_high(highs: pd.Series, current_price: float, window: int) -> float | None:
+    """How far `current_price` sits below the highest high of the last
+    `window` candles, as a percentage (0.0 = at the high, 60.0 = 60% below
+    it). None if there isn't a full `window` of history yet — e.g. a coin
+    listed 40 days ago has no real 360-day figure, and showing a number
+    computed from 40 days of data as if it covered a year would be
+    misleading rather than merely imprecise.
+    """
+    recent = highs.tail(window)
+    if len(recent) < window:
+        return None
+    peak = recent.max()
+    if not peak or peak <= 0:
+        return None
+    return round(max(0.0, (peak - current_price) / peak * 100.0), 1)

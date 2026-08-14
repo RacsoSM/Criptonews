@@ -114,6 +114,29 @@ def test_get_coins_includes_entry_score(monkeypatch):
     assert eth["entry_score"] is None  # never scored yet
 
 
+def test_get_coins_includes_drawdown_stats(monkeypatch):
+    SessionLocal = _seeded_db(monkeypatch)
+    session = SessionLocal()
+    coin = session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    coin.pct_below_high_90d = 12.5
+    coin.pct_below_high_180d = 34.0
+    coin.pct_below_high_360d = 58.2
+    session.commit()
+    session.close()
+    monkeypatch.setattr("app.routers.coins.get_current_prices", lambda symbols: {})
+    client = TestClient(app)
+
+    response = client.get("/coins")
+
+    assert response.status_code == 200
+    btc = next(c for c in response.json() if c["symbol"] == "BTCUSDT")
+    eth = next(c for c in response.json() if c["symbol"] == "ETHUSDT")
+    assert btc["pct_below_high_90d"] == 12.5
+    assert btc["pct_below_high_180d"] == 34.0
+    assert btc["pct_below_high_360d"] == 58.2
+    assert eth["pct_below_high_90d"] is None
+
+
 def test_get_coins_ignores_closed_position(monkeypatch):
     SessionLocal = _seeded_db(monkeypatch)
     session = SessionLocal()

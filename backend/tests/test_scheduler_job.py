@@ -606,6 +606,75 @@ def test_run_cycle_still_generates_signals_when_entry_score_computation_raises(
     assert btc.entry_score is None  # computation failed, left untouched
 
 
+def _fake_daily_df(peak=100.0, current=60.0, days=360):
+    # Flat at `peak` except the very last candle, which closes at `current` —
+    # gives a predictable, exact expected drawdown for every window size.
+    highs = [peak] * (days - 1) + [current]
+    closes = [peak] * (days - 1) + [current]
+    return pd.DataFrame({
+        "open": closes, "high": highs, "low": [c - 1 for c in closes],
+        "close": closes, "volume": [10.0] * days,
+    })
+
+
+def _klines_by_interval(hourly_df, daily_df):
+    def _side_effect(symbol, interval="1h", limit=100):
+        return daily_df if interval == "1d" else hourly_df
+
+    return _side_effect
+
+
+def test_run_cycle_persists_drawdown_stats_for_each_coin(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch(
+        "app.scheduler.get_klines",
+        side_effect=_klines_by_interval(_fake_klines_df(), _fake_daily_df(peak=100.0, current=60.0)),
+    )
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+
+    run_cycle()
+
+    btc = db_session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    assert btc.pct_below_high_90d == 40.0
+    assert btc.pct_below_high_180d == 40.0
+    assert btc.pct_below_high_360d == 40.0
+
+
+def test_run_cycle_still_generates_signals_when_drawdown_computation_raises(
+    mocker, db_session
+):
+    """Same isolation as the entry score: a drawdown-stats bug must never
+    cost the cycle its real BUY/SELL signal for that coin."""
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+
+    def _raise_on_daily(symbol, interval="1h", limit=100):
+        if interval == "1d":
+            raise RuntimeError("boom")
+        return _fake_klines_df()
+
+    mocker.patch("app.scheduler.get_klines", side_effect=_raise_on_daily)
+    fake_signal = SimpleNamespace(coin_symbol="BTCUSDT", signal_type="BUY", price=140.0)
+    mocker.patch("app.scheduler.process_coin", return_value=fake_signal)
+    notify_mock = mocker.patch("app.scheduler.send_signal_notification", return_value=True)
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()  # must not raise
+
+    assert _notified(notify_mock) == [("device-1", "BTCUSDT", "BUY", 140.0)]
+    btc = db_session.query(Coin).filter_by(symbol="BTCUSDT").one()
+    assert btc.pct_below_high_90d is None
+
+
 def test_start_scheduler_registers_hourly_job_and_stores_scheduler(mocker):
     from app.scheduler import start_scheduler
 

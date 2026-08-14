@@ -66,4 +66,18 @@ class CoinDtoTest {
             coin.imageUrl,
         )
     }
+
+    @Test
+    fun `decodes drawdown stats`() {
+        val raw = """
+            {"symbol":"BTCUSDT","name":"Bitcoin","rank":1,"has_open_position":false,
+             "pct_below_high_90d":19.9,"pct_below_high_180d":24.0,"pct_below_high_360d":50.1}
+        """.trimIndent()
+
+        val coin = json.decodeFromString<CoinDto>(raw)
+
+        assertEquals(19.9, coin.pctBelowHigh90d)
+        assertEquals(24.0, coin.pctBelowHigh180d)
+        assertEquals(50.1, coin.pctBelowHigh360d)
+    }
 }

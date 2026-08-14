@@ -30,6 +30,9 @@ class CoinOut(BaseModel):
     image_url: str | None = None
     current_price: float | None = None
     entry_score: float | None = None
+    pct_below_high_90d: float | None = None
+    pct_below_high_180d: float | None = None
+    pct_below_high_360d: float | None = None
 
 
 class PositionOut(BaseModel):

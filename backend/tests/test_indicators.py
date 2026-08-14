@@ -1,6 +1,6 @@
 import pandas as pd
 
-from app.indicators import rsi, ema, macd, donchian, atr, volume_ratio
+from app.indicators import rsi, ema, macd, donchian, atr, volume_ratio, pct_below_high
 
 
 def test_rsi_all_gains_is_100():
@@ -67,3 +67,32 @@ def test_volume_ratio_is_nan_before_the_window_fills():
     volumes = pd.Series([100.0] * 5)
     result = volume_ratio(volumes, period=20)
     assert pd.isna(result.iloc[-1])
+
+
+def test_pct_below_high_at_the_peak_is_zero():
+    highs = pd.Series([80.0] * 89 + [100.0])
+    assert pct_below_high(highs, current_price=100.0, window=90) == 0.0
+
+
+def test_pct_below_high_computes_the_drawdown_from_the_windows_peak():
+    highs = pd.Series([100.0] * 90)
+    assert pct_below_high(highs, current_price=60.0, window=90) == 40.0
+
+
+def test_pct_below_high_only_looks_within_the_window():
+    # A much higher peak sits outside the 90-window; it must not count.
+    highs = pd.Series([1000.0] + [100.0] * 90)
+    assert pct_below_high(highs, current_price=80.0, window=90) == 20.0
+
+
+def test_pct_below_high_returns_none_without_a_full_window():
+    highs = pd.Series([100.0] * 40)  # only 40 candles, asking for 90
+    assert pct_below_high(highs, current_price=80.0, window=90) is None
+
+
+def test_pct_below_high_never_goes_negative_above_the_recorded_peak():
+    # Current price higher than any recorded high (e.g. a live price fetched
+    # after the last daily candle closed) must clamp to 0%, not a negative
+    # "below the high" figure.
+    highs = pd.Series([100.0] * 90)
+    assert pct_below_high(highs, current_price=120.0, window=90) == 0.0
