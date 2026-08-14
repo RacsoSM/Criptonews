@@ -695,24 +695,3 @@ def test_run_cycle_still_generates_signals_when_drawdown_computation_raises(
     assert _notified(notify_mock) == [("device-1", "BTCUSDT", "BUY", 140.0)]
     btc = db_session.query(Coin).filter_by(symbol="BTCUSDT").one()
     assert btc.pct_below_high_90d is None
-
-
-def test_start_scheduler_registers_hourly_job_and_stores_scheduler(mocker):
-    from app.scheduler import start_scheduler
-
-    scheduler_instance = mocker.Mock()
-    scheduler_cls = mocker.patch(
-        "app.scheduler.BackgroundScheduler", return_value=scheduler_instance
-    )
-    app = SimpleNamespace(state=SimpleNamespace())
-
-    start_scheduler(app)
-
-    scheduler_cls.assert_called_once_with()
-    assert scheduler_instance.add_job.call_count == 1
-    args, kwargs = scheduler_instance.add_job.call_args
-    assert args[0] is run_cycle
-    assert args[1] == "cron"
-    assert kwargs == {"minute": 1}
-    scheduler_instance.start.assert_called_once_with()
-    assert app.state.scheduler is scheduler_instance

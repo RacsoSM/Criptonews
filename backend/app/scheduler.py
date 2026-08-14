@@ -50,9 +50,6 @@ position-state logic; it only sequences the modules that own those.
 import logging
 from types import SimpleNamespace
 
-from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
-
 from app.config import settings
 from app.db import get_session
 from app.entry_score import compute_entry_score
@@ -270,10 +267,3 @@ def run_cycle() -> None:
         signals_generated,
         notifications_sent,
     )
-
-
-def start_scheduler(app: FastAPI) -> None:
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(run_cycle, "cron", minute=1)  # 1 minute past the hour, after candle close
-    scheduler.start()
-    app.state.scheduler = scheduler
