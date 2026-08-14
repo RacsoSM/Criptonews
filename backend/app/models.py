@@ -57,3 +57,15 @@ class DeviceToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     token: Mapped[str] = mapped_column(String, unique=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class EntryScoreHistory(Base):
+    """One row per coin per hourly cycle — Coin.entry_score only holds the
+    latest value, this is what lets the Android detail screen chart how a
+    coin's entry score moved over the past hours/days."""
+    __tablename__ = "entry_score_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    coin_symbol: Mapped[str] = mapped_column(String, index=True)
+    score: Mapped[float] = mapped_column(Float)
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))

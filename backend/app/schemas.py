@@ -79,6 +79,19 @@ class DeviceTokenIn(BaseModel):
     token: str
 
 
+class EntryScoreHistoryOut(BaseModel):
+    score: float
+    computed_at: datetime
+
+    class Config:
+        from_attributes = True
+
+    @field_validator("computed_at")
+    @classmethod
+    def _utc_timestamps(cls, value: datetime) -> datetime:
+        return _assume_utc(value)
+
+
 class CandleOut(BaseModel):
     open_time: int
     open: float

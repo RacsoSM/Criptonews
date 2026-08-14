@@ -58,7 +58,7 @@ from app.db import get_session
 from app.entry_score import compute_entry_score
 from app.indicators import pct_below_high
 from app.market_data import get_klines, get_top_symbols
-from app.models import Coin, DeviceToken, Position
+from app.models import Coin, DeviceToken, EntryScoreHistory, Position
 from app.notifications import send_signal_notification
 from app.positions_service import process_coin
 
@@ -193,7 +193,9 @@ def run_cycle() -> None:
                 coin = session.query(Coin).filter_by(symbol=symbol).one_or_none()
                 if coin is not None:
                     try:
-                        coin.entry_score = compute_entry_score(df)
+                        score = compute_entry_score(df)
+                        coin.entry_score = score
+                        session.add(EntryScoreHistory(coin_symbol=symbol, score=score))
                     except Exception:
                         logger.exception("Failed to compute entry score for %s", symbol)
 

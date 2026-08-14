@@ -4,6 +4,7 @@ import com.criptonews.app.data.CryptoRepository
 import com.criptonews.app.network.FakeApiService
 import com.criptonews.app.network.dto.CandleDto
 import com.criptonews.app.network.dto.CoinDto
+import com.criptonews.app.network.dto.EntryScoreHistoryDto
 import com.criptonews.app.ui.UiState
 import com.criptonews.app.util.MainDispatcherRule
 import kotlinx.coroutines.test.runTest
@@ -52,6 +53,21 @@ class CoinDetailViewModelTest {
 
         val data = (viewModel.uiState.value as UiState.Success).data
         assertNull(data.position)
+    }
+
+    @Test
+    fun `includes the coin's entry score history`() = runTest {
+        val flatCoin = CoinDto(symbol = "BTCUSDT", name = "Bitcoin", rank = 1, hasOpenPosition = false)
+        val point = EntryScoreHistoryDto(score = 42.5, computedAt = "2026-08-14T19:01:00+00:00")
+        val repository = CryptoRepository(
+            FakeApiService(coins = listOf(flatCoin), candles = listOf(candle), entryScoreHistory = listOf(point)),
+        )
+        val viewModel = CoinDetailViewModel(repository, symbol = "BTCUSDT")
+
+        testScheduler.advanceUntilIdle()
+
+        val data = (viewModel.uiState.value as UiState.Success).data
+        assertEquals(listOf(point), data.scoreHistory)
     }
 
     @Test

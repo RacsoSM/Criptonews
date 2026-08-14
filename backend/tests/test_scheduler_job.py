@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 from sqlalchemy.exc import OperationalError
 
-from app.models import Coin, DeviceToken, Position
+from app.models import Coin, DeviceToken, EntryScoreHistory, Position
 from app.scheduler import run_cycle
 
 
@@ -577,6 +577,28 @@ def test_run_cycle_persists_entry_score_for_each_coin(mocker, db_session):
     eth = db_session.query(Coin).filter_by(symbol="ETHUSDT").one()
     assert btc.entry_score == 42.5
     assert eth.entry_score == 7.0
+
+
+def test_run_cycle_appends_an_entry_score_history_row_for_each_coin(mocker, db_session):
+    # side_effect (not return_value): a @contextmanager instance is single-
+    # use, and this test enters it twice via two separate run_cycle() calls.
+    mocker.patch("app.scheduler.get_session", side_effect=lambda: _session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.compute_entry_score", return_value=55.5)
+
+    run_cycle()
+    run_cycle()  # a second hourly cycle must APPEND, not overwrite
+
+    history = (
+        db_session.query(EntryScoreHistory).filter_by(coin_symbol="BTCUSDT").all()
+    )
+    assert len(history) == 2
+    assert all(row.score == 55.5 for row in history)
 
 
 def test_run_cycle_still_generates_signals_when_entry_score_computation_raises(

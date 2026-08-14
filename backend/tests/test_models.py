@@ -1,7 +1,7 @@
 # backend/tests/test_models.py
 from datetime import datetime, timezone
 
-from app.models import Coin, Signal, Position, DeviceToken
+from app.models import Coin, Signal, Position, DeviceToken, EntryScoreHistory
 
 
 def test_coin_model_fields(db_session):
@@ -58,3 +58,11 @@ def test_device_token_unique(db_session):
     db_session.add(token)
     db_session.flush()
     assert token.id is not None
+
+
+def test_entry_score_history_model_fields(db_session):
+    entry = EntryScoreHistory(coin_symbol="BTCUSDT", score=42.5)
+    db_session.add(entry)
+    db_session.flush()
+    assert entry.id is not None
+    assert entry.computed_at is not None

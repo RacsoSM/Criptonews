@@ -51,6 +51,20 @@ class CryptoRepositoryTest {
     }
 
     @Test
+    fun `getEntryScoreHistory returns parsed list on success`() = runTest {
+        server.enqueue(
+            MockResponse().setBody(
+                """[{"score":42.5,"computed_at":"2026-08-14T19:01:00+00:00"}]"""
+            ).setHeader("Content-Type", "application/json")
+        )
+
+        val result = repository.getEntryScoreHistory("BTCUSDT")
+
+        assertTrue(result.isSuccess)
+        assertEquals(42.5, result.getOrThrow().first().score, 0.0)
+    }
+
+    @Test
     fun `registerDevice succeeds on 201`() = runTest {
         server.enqueue(MockResponse().setResponseCode(201).setBody("""{"status":"registered"}"""))
 

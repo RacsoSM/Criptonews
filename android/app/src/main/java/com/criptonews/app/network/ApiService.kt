@@ -3,6 +3,7 @@ package com.criptonews.app.network
 import com.criptonews.app.network.dto.CandleDto
 import com.criptonews.app.network.dto.CoinDto
 import com.criptonews.app.network.dto.DeviceTokenRequest
+import com.criptonews.app.network.dto.EntryScoreHistoryDto
 import com.criptonews.app.network.dto.SignalDto
 import retrofit2.http.Body
 import retrofit2.http.GET
@@ -22,6 +23,12 @@ interface ApiService {
         @Path("symbol") symbol: String,
         @Query("limit") limit: Int = 100,
     ): List<CandleDto>
+
+    @GET("coins/{symbol}/entry-score-history")
+    suspend fun getEntryScoreHistory(
+        @Path("symbol") symbol: String,
+        @Query("limit") limit: Int = 168,
+    ): List<EntryScoreHistoryDto>
 
     @POST("devices")
     suspend fun registerDevice(@Body request: DeviceTokenRequest)
