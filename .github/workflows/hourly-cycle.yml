@@ -1,0 +1,38 @@
+name: Hourly ingestion cycle
+
+on:
+  schedule:
+    # Runs a few minutes past the hour, after Binance's 1h candle closes.
+    # GitHub's scheduler is best-effort and can drift a few minutes — that's
+    # fine here since we always pull the last 100 candles, not just the
+    # newest one.
+    - cron: "5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  run-cycle:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Firebase service account credentials
+        run: echo "$FIREBASE_SERVICE_ACCOUNT_JSON" > firebase-service-account.json
+        env:
+          FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Run ingestion cycle
+        run: python -m scripts.run_cycle
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          FIREBASE_CREDENTIALS_PATH: ./firebase-service-account.json
+          TOP_N_COINS: "30"
