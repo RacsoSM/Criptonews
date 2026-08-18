@@ -4,9 +4,12 @@ import httpx
 import pandas as pd
 
 COINGECKO_MARKETS_URL = "https://api.coingecko.com/api/v3/coins/markets"
-BINANCE_EXCHANGE_INFO_URL = "https://api.binance.com/api/v3/exchangeInfo"
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-BINANCE_TICKER_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
+# api.binance.com returns HTTP 451 (geo-blocked) from US-based IPs, which is
+# where GitHub Actions runners live — data-api.binance.vision mirrors the same
+# public market-data endpoints without that restriction.
+BINANCE_EXCHANGE_INFO_URL = "https://data-api.binance.vision/api/v3/exchangeInfo"
+BINANCE_KLINES_URL = "https://data-api.binance.vision/api/v3/klines"
+BINANCE_TICKER_PRICE_URL = "https://data-api.binance.vision/api/v3/ticker/price"
 
 
 def get_top_symbols(limit: int = 30) -> list[dict]:
