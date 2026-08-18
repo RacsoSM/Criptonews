@@ -53,6 +53,36 @@ def test_get_top_symbols_filters_to_binance_pairs(mocker):
     ]
 
 
+def test_get_top_symbols_backfills_past_limit_to_reach_full_count(mocker):
+    """Coins without a Binance pair (stablecoins, unlisted tokens) must not
+    shrink the tracked list below `limit` — the next-ranked tradable coin
+    should fill the gap instead of being left out.
+    """
+    coingecko_sample = [
+        {"symbol": "btc", "name": "Bitcoin", "market_cap_rank": 1, "image": None},
+        {"symbol": "eth", "name": "Ethereum", "market_cap_rank": 2, "image": None},
+        {"symbol": "usdt", "name": "Tether", "market_cap_rank": 3, "image": None},
+        {"symbol": "sol", "name": "Solana", "market_cap_rank": 4, "image": None},
+    ]
+    binance_exchange_info = {
+        "symbols": [{"symbol": "BTCUSDT"}, {"symbol": "ETHUSDT"}, {"symbol": "SOLUSDT"}],
+    }
+
+    def fake_get(url, params=None, timeout=None):
+        if "coingecko" in url:
+            assert params["per_page"] > 3, "must ask CoinGecko for more than `limit` to allow backfill"
+            return httpx.Response(200, json=coingecko_sample)
+        if "exchangeInfo" in url:
+            return httpx.Response(200, json=binance_exchange_info)
+        raise AssertionError(f"unexpected URL {url}")
+
+    mocker.patch("app.market_data.httpx.get", side_effect=fake_get)
+
+    result = get_top_symbols(limit=3)
+
+    assert [r["symbol"] for r in result] == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+
 def test_get_klines_returns_dataframe(mocker):
     mocker.patch(
         "app.market_data.httpx.get",

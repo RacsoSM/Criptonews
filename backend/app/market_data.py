@@ -10,9 +10,13 @@ BINANCE_TICKER_PRICE_URL = "https://api.binance.com/api/v3/ticker/price"
 
 
 def get_top_symbols(limit: int = 30) -> list[dict]:
+    # Stablecoins and Binance-unlisted tokens routinely occupy top-market-cap
+    # ranks but never produce a `<SYMBOL>USDT` pair, so fetching exactly
+    # `limit` candidates would silently shrink the tracked list below `limit`.
+    # Over-fetch and stop once `limit` tradable coins are found instead.
     coingecko_resp = httpx.get(
         COINGECKO_MARKETS_URL,
-        params={"vs_currency": "usd", "order": "market_cap_desc", "per_page": limit, "page": 1},
+        params={"vs_currency": "usd", "order": "market_cap_desc", "per_page": min(limit * 4, 250), "page": 1},
         timeout=10,
     )
     if coingecko_resp.status_code >= 400:
@@ -26,6 +30,8 @@ def get_top_symbols(limit: int = 30) -> list[dict]:
 
     result = []
     for coin in ranked:
+        if len(result) >= limit:
+            break
         candidate = f"{coin['symbol'].upper()}USDT"
         if candidate in binance_symbols:
             result.append({
