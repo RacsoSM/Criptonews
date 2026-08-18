@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -27,22 +28,50 @@ import coil3.compose.AsyncImage
 import com.criptonews.app.network.dto.CoinDto
 import com.criptonews.app.ui.UiState
 import java.text.NumberFormat
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+private val lastUpdatedFormatter = DateTimeFormatter.ofPattern("HH:mm")
 
 @Composable
 fun WatchlistScreen(viewModel: WatchlistViewModel, onCoinClick: (String) -> Unit) {
     val state by viewModel.uiState.collectAsState()
+    val lastUpdated by viewModel.lastUpdated.collectAsState()
 
-    when (val current = state) {
-        is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
+    Column(Modifier.fillMaxSize()) {
+        LastUpdatedLabel(lastUpdated)
+        Box(Modifier.fillMaxSize()) {
+            when (val current = state) {
+                is UiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+                is UiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Error: ${current.message}")
+                }
+                is UiState.Success -> CoinList(current.data, onCoinClick)
+            }
         }
-        is UiState.Error -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Error: ${current.message}")
-        }
-        is UiState.Success -> CoinList(current.data, onCoinClick)
     }
 }
+
+@Composable
+private fun LastUpdatedLabel(lastUpdated: String?) {
+    val text = lastUpdated?.let { formatLastUpdated(it) } ?: return
+    Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), horizontalArrangement = Arrangement.End) {
+        Text(
+            text = "Actualizado $text",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** `iso` arrives from the backend in UTC; must be converted to the device's
+ * own zone before formatting, or the label reads out the wrong local time. */
+internal fun formatLastUpdated(iso: String, zone: ZoneId = ZoneId.systemDefault()): String? =
+    runCatching { OffsetDateTime.parse(iso).atZoneSameInstant(zone).format(lastUpdatedFormatter) }.getOrNull()
 
 @Composable
 private fun CoinList(coins: List<CoinDto>, onCoinClick: (String) -> Unit) {

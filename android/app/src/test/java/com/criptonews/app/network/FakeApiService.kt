@@ -5,13 +5,16 @@ import com.criptonews.app.network.dto.CoinDto
 import com.criptonews.app.network.dto.DeviceTokenRequest
 import com.criptonews.app.network.dto.EntryScoreHistoryDto
 import com.criptonews.app.network.dto.SignalDto
+import com.criptonews.app.network.dto.StatusDto
 
 class FakeApiService(
     private val coins: List<CoinDto> = emptyList(),
     private val signals: List<SignalDto> = emptyList(),
     private val candles: List<CandleDto> = emptyList(),
     private val entryScoreHistory: List<EntryScoreHistoryDto> = emptyList(),
+    private val status: StatusDto = StatusDto(),
     private val failWith: Throwable? = null,
+    private val statusFailWith: Throwable? = null,
 ) : ApiService {
     var registeredToken: String? = null
         private set
@@ -39,5 +42,10 @@ class FakeApiService(
     override suspend fun registerDevice(request: DeviceTokenRequest) {
         failWith?.let { throw it }
         registeredToken = request.token
+    }
+
+    override suspend fun getStatus(): StatusDto {
+        statusFailWith?.let { throw it }
+        return status
     }
 }

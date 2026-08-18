@@ -92,6 +92,15 @@ class EntryScoreHistoryOut(BaseModel):
         return _assume_utc(value)
 
 
+class StatusOut(BaseModel):
+    last_updated: datetime | None
+
+    @field_validator("last_updated")
+    @classmethod
+    def _utc_timestamps(cls, value: datetime | None) -> datetime | None:
+        return _assume_utc(value)
+
+
 class CandleOut(BaseModel):
     open_time: int
     open: float

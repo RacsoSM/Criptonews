@@ -4,7 +4,7 @@ import logging
 from fastapi import FastAPI
 
 from app.db import init_db
-from app.routers import devices, coins, signals, candles, entry_score_history
+from app.routers import devices, coins, signals, candles, entry_score_history, status
 
 # uvicorn configures only its own loggers, leaving the root logger at WARNING —
 # so any INFO-level logging from the app would never reach the console without
@@ -21,6 +21,7 @@ app.include_router(coins.router)
 app.include_router(signals.router)
 app.include_router(candles.router)
 app.include_router(entry_score_history.router)
+app.include_router(status.router)
 
 
 @app.on_event("startup")

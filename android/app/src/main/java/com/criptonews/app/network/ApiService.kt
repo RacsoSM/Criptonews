@@ -5,6 +5,7 @@ import com.criptonews.app.network.dto.CoinDto
 import com.criptonews.app.network.dto.DeviceTokenRequest
 import com.criptonews.app.network.dto.EntryScoreHistoryDto
 import com.criptonews.app.network.dto.SignalDto
+import com.criptonews.app.network.dto.StatusDto
 import retrofit2.http.Body
 import retrofit2.http.GET
 import retrofit2.http.POST
@@ -32,4 +33,7 @@ interface ApiService {
 
     @POST("devices")
     suspend fun registerDevice(@Body request: DeviceTokenRequest)
+
+    @GET("status")
+    suspend fun getStatus(): StatusDto
 }

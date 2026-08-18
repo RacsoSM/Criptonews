@@ -15,8 +15,14 @@ class WatchlistViewModel(private val repository: CryptoRepository) : ViewModel()
     private val _uiState = MutableStateFlow<UiState<List<CoinDto>>>(UiState.Loading)
     val uiState: StateFlow<UiState<List<CoinDto>>> = _uiState.asStateFlow()
 
+    // Kept separate from uiState: a /status failure must never blank out an
+    // already-loaded coin list, it should just leave this text hidden.
+    private val _lastUpdated = MutableStateFlow<String?>(null)
+    val lastUpdated: StateFlow<String?> = _lastUpdated.asStateFlow()
+
     init {
         loadCoins()
+        loadStatus()
     }
 
     fun loadCoins() {
@@ -26,6 +32,12 @@ class WatchlistViewModel(private val repository: CryptoRepository) : ViewModel()
                 onSuccess = { coins -> _uiState.value = UiState.Success(coins) },
                 onFailure = { error -> _uiState.value = UiState.Error(error.message ?: "Unknown error") },
             )
+        }
+    }
+
+    fun loadStatus() {
+        viewModelScope.launch {
+            repository.getStatus().onSuccess { status -> _lastUpdated.value = status.lastUpdated }
         }
     }
 }

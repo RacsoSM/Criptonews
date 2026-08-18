@@ -6,6 +6,7 @@ import com.criptonews.app.network.dto.CoinDto
 import com.criptonews.app.network.dto.DeviceTokenRequest
 import com.criptonews.app.network.dto.EntryScoreHistoryDto
 import com.criptonews.app.network.dto.SignalDto
+import com.criptonews.app.network.dto.StatusDto
 
 class CryptoRepository(private val apiService: ApiService) {
 
@@ -22,4 +23,6 @@ class CryptoRepository(private val apiService: ApiService) {
 
     suspend fun registerDevice(token: String): Result<Unit> =
         runCatching { apiService.registerDevice(DeviceTokenRequest(token)) }
+
+    suspend fun getStatus(): Result<StatusDto> = runCatching { apiService.getStatus() }
 }
