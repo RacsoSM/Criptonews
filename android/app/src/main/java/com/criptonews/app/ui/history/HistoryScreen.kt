@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.criptonews.app.network.dto.SignalDto
 import com.criptonews.app.ui.UiState
 import java.time.OffsetDateTime
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 private val displayFormatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
@@ -57,6 +58,8 @@ private fun SignalRow(signal: SignalDto) {
     }
 }
 
-private fun formatTimestamp(iso: String): String = runCatching {
-    OffsetDateTime.parse(iso).format(displayFormatter)
+/** `iso` arrives from the backend in UTC; must be converted to the device's
+ * own zone before formatting, or signal times read hours off from local time. */
+internal fun formatTimestamp(iso: String, zone: ZoneId = ZoneId.systemDefault()): String = runCatching {
+    OffsetDateTime.parse(iso).atZoneSameInstant(zone).format(displayFormatter)
 }.getOrDefault(iso)
