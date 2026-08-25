@@ -56,10 +56,15 @@ from app.entry_score import compute_entry_score
 from app.indicators import pct_below_high
 from app.market_data import get_klines, get_top_symbols
 from app.models import Coin, DeviceToken, EntryScoreHistory, Position
-from app.notifications import send_signal_notification
+from app.notifications import send_entry_score_notification, send_signal_notification
 from app.positions_service import process_coin
 
 logger = logging.getLogger(__name__)
+
+# Entry-score thresholds that trigger a standalone "buy opportunity" push,
+# independent of the real BUY/SELL signal notifications above. Only upward
+# crossings fire (see `_entry_score_crossings`), never on the way back down.
+ENTRY_SCORE_THRESHOLDS = (60, 80)
 
 
 def _refresh_coins(session, top_symbols: list[dict]) -> None:
@@ -124,6 +129,46 @@ def _cycle_symbols(session, top_symbols: list[dict]) -> list[str]:
     return symbols
 
 
+def _entry_score_crossings(prev_score: float | None, score: float) -> list[int]:
+    """Which of `ENTRY_SCORE_THRESHOLDS` were crossed upward this cycle.
+
+    A `None` previous score (the coin has never been scored before) is
+    treated as a baseline of 0 — a coin that is already above a threshold the
+    first time it's scored is a genuine opportunity worth surfacing right
+    away, not something to wait on a future crossing for.
+    """
+    baseline = prev_score if prev_score is not None else 0.0
+    return [t for t in ENTRY_SCORE_THRESHOLDS if baseline < t <= score]
+
+
+def _notify_entry_score_all(device_tokens: list[str], notice) -> int:
+    """Push an entry-score threshold alert to every token; return send count.
+
+    Same swallow-and-log discipline as `_notify_all`: a bad token or a
+    Firebase failure here must never cost the cycle's already-committed work.
+    """
+    sent = 0
+    for token in device_tokens:
+        try:
+            if send_entry_score_notification(token, notice):
+                sent += 1
+            else:
+                logger.warning(
+                    "FCM send returned failure for token ending %s (entry score %s%% %s)",
+                    token[-6:],
+                    notice.threshold,
+                    notice.coin_symbol,
+                )
+        except Exception:
+            logger.exception(
+                "Entry score notification failed for token ending %s (%s%% %s)",
+                token[-6:],
+                notice.threshold,
+                notice.coin_symbol,
+            )
+    return sent
+
+
 def _notify_all(device_tokens: list[str], signal) -> int:
     """Push `signal` to every registered token; return how many sends succeeded.
 
@@ -159,9 +204,11 @@ def _notify_all(device_tokens: list[str], signal) -> int:
 def run_cycle() -> None:
     device_tokens: list[str] = []
     pending_notifications: list[SimpleNamespace] = []
+    pending_entry_score_notifications: list[SimpleNamespace] = []
     coins_processed = 0
     signals_generated = 0
     notifications_sent = 0
+    entry_score_notifications_sent = 0
     aborted = False
 
     with get_session() as session:
@@ -191,8 +238,15 @@ def run_cycle() -> None:
                 if coin is not None:
                     try:
                         score = compute_entry_score(df)
+                        prev_score = coin.entry_score
                         coin.entry_score = score
                         session.add(EntryScoreHistory(coin_symbol=symbol, score=score))
+                        for threshold in _entry_score_crossings(prev_score, score):
+                            pending_entry_score_notifications.append(SimpleNamespace(
+                                coin_symbol=symbol,
+                                score=score,
+                                threshold=threshold,
+                            ))
                     except Exception:
                         logger.exception("Failed to compute entry score for %s", symbol)
 
@@ -259,6 +313,8 @@ def run_cycle() -> None:
     if not aborted:
         for snapshot in pending_notifications:
             notifications_sent += _notify_all(device_tokens, snapshot)
+        for notice in pending_entry_score_notifications:
+            entry_score_notifications_sent += _notify_entry_score_all(device_tokens, notice)
 
     logger.info(
         "Cycle complete: %d coins processed, %d signals generated, "
@@ -267,3 +323,9 @@ def run_cycle() -> None:
         signals_generated,
         notifications_sent,
     )
+    if pending_entry_score_notifications:
+        logger.info(
+            "Entry score alerts: %d threshold crossings, %d notifications sent",
+            len(pending_entry_score_notifications),
+            entry_score_notifications_sent,
+        )

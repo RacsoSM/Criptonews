@@ -666,6 +666,125 @@ def test_run_cycle_persists_drawdown_stats_for_each_coin(mocker, db_session):
     assert btc.pct_below_high_360d == 40.0
 
 
+def test_run_cycle_notifies_entry_score_crossing_60(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.compute_entry_score", return_value=65.0)
+    entry_notify_mock = mocker.patch(
+        "app.scheduler.send_entry_score_notification", return_value=True
+    )
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    assert entry_notify_mock.call_count == 1
+    token, notice = entry_notify_mock.call_args.args
+    assert (token, notice.coin_symbol, notice.threshold, notice.score) == (
+        "device-1", "BTCUSDT", 60, 65.0,
+    )
+
+
+def test_run_cycle_notifies_both_thresholds_when_score_jumps_past_80(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.compute_entry_score", return_value=85.0)
+    entry_notify_mock = mocker.patch(
+        "app.scheduler.send_entry_score_notification", return_value=True
+    )
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    thresholds = sorted(call.args[1].threshold for call in entry_notify_mock.call_args_list)
+    assert thresholds == [60, 80]
+
+
+def test_run_cycle_does_not_renotify_entry_score_while_sustained_above_threshold(
+    mocker, db_session
+):
+    mocker.patch(
+        "app.scheduler.get_session", side_effect=lambda: _session_ctx(db_session)
+    )
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.compute_entry_score", return_value=65.0)
+    entry_notify_mock = mocker.patch(
+        "app.scheduler.send_entry_score_notification", return_value=True
+    )
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+    run_cycle()  # score stayed at 65.0 — already-crossed threshold must not refire
+
+    assert entry_notify_mock.call_count == 1
+
+
+def test_run_cycle_renotifies_entry_score_after_dropping_and_recrossing(mocker, db_session):
+    mocker.patch(
+        "app.scheduler.get_session", side_effect=lambda: _session_ctx(db_session)
+    )
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch(
+        "app.scheduler.compute_entry_score", side_effect=[65.0, 40.0, 65.0]
+    )
+    entry_notify_mock = mocker.patch(
+        "app.scheduler.send_entry_score_notification", return_value=True
+    )
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()  # crosses 60 -> notifies
+    run_cycle()  # drops back below 60
+    run_cycle()  # crosses 60 again -> notifies again
+
+    assert entry_notify_mock.call_count == 2
+
+
+def test_run_cycle_does_not_notify_entry_score_when_below_threshold(mocker, db_session):
+    mocker.patch("app.scheduler.get_session", return_value=_session_ctx(db_session))
+    mocker.patch(
+        "app.scheduler.get_top_symbols",
+        return_value=[{"symbol": "BTCUSDT", "name": "Bitcoin", "rank": 1}],
+    )
+    mocker.patch("app.scheduler.get_klines", return_value=_fake_klines_df())
+    mocker.patch("app.scheduler.process_coin", return_value=None)
+    mocker.patch("app.scheduler.compute_entry_score", return_value=59.9)
+    entry_notify_mock = mocker.patch("app.scheduler.send_entry_score_notification")
+
+    db_session.add(DeviceToken(token="device-1"))
+    db_session.commit()
+
+    run_cycle()
+
+    entry_notify_mock.assert_not_called()
+
+
 def test_run_cycle_still_generates_signals_when_drawdown_computation_raises(
     mocker, db_session
 ):
